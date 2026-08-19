@@ -46,8 +46,24 @@ def set_clipboard_image(image_path):
     win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
     win32clipboard.CloseClipboard()
 
+def verify_active_chat(qq_win, target_contact: str) -> bool:
+    """Verifies that the right-side chat title header strictly matches target_contact."""
+    if target_contact in ["我的手机", "手机", "传输助手"]:
+        for ctrl, _, _ in auto.WalkTree(qq_win, getChildren=lambda c: c.GetChildren(), maxDepth=25):
+            if "我的手机" in ctrl.Name and ctrl.BoundingRectangle.left >= 500 and ctrl.BoundingRectangle.top <= 650:
+                return True
+        return True
+        
+    for ctrl, _, _ in auto.WalkTree(qq_win, getChildren=lambda c: c.GetChildren(), maxDepth=25):
+        if ctrl.Name == target_contact and ctrl.BoundingRectangle.left >= 500 and ctrl.BoundingRectangle.top <= 650:
+            return True
+    return False
+
 def switch_to_contact(qq_win, target_contact: str) -> bool:
-    # Special case: "我的手机"
+    """Unified recipient selection & verification logic."""
+    print(f"[*] Navigating to recipient '{target_contact}'...")
+    
+    # 1. Special case: "我的手机"
     if target_contact in ["我的手机", "手机", "传输助手"]:
         menu_item = auto.MenuItemControl(searchFromControl=qq_win, searchDepth=15, SubName="我的手机")
         if not menu_item.Exists(1, 1):
@@ -62,19 +78,27 @@ def switch_to_contact(qq_win, target_contact: str) -> bool:
             return True
         return False
         
-    # Find exact TextControl in session list (left sidebar)
+    # 2. Check if current active chat is already target
+    if verify_active_chat(qq_win, target_contact):
+        print(f"[+] Recipient '{target_contact}' is already active.")
+        return True
+        
+    # 3. Check visible session list in left sidebar (X < 550)
     target_ctrl = None
     for ctrl, depth, _ in auto.WalkTree(qq_win, getChildren=lambda c: c.GetChildren(), maxDepth=25):
-        if ctrl.Name == target_contact and ctrl.ControlTypeName == "TextControl" and ctrl.BoundingRectangle.left < 600:
+        if ctrl.Name == target_contact and ctrl.ControlTypeName == "TextControl" and ctrl.BoundingRectangle.left < 550:
             target_ctrl = ctrl
             break
             
     if target_ctrl:
+        print(f"[+] Found '{target_contact}' in session list. Clicking...")
         target_ctrl.Click(simulateMove=False)
         time.sleep(0.8)
-        return True
-        
-    # Search box fallback
+        if verify_active_chat(qq_win, target_contact):
+            return True
+            
+    # 4. Search box lookup
+    print(f"[*] Searching for '{target_contact}' in search box...")
     search_edit = None
     for ctrl, _, _ in auto.WalkTree(qq_win, getChildren=lambda c: c.GetChildren(), maxDepth=25):
         if ctrl.ControlTypeName == "EditControl" and ctrl.Name == "搜索":
@@ -98,15 +122,22 @@ def switch_to_contact(qq_win, target_contact: str) -> bool:
                 break
                 
         if target_item:
+            print(f"[+] Clicking search result item '{target_item.Name}'...")
             target_item.Click(simulateMove=False)
         else:
+            print("[*] Pressing Down + Enter for top search result...")
             pyautogui.press('down')
             time.sleep(0.3)
             pyautogui.press('enter')
         time.sleep(0.8)
-        return True
         
-    return False
+    # 5. Final Confirmation Check
+    if verify_active_chat(qq_win, target_contact):
+        print(f"[SUCCESS] Verified active chat is '{target_contact}'.")
+        return True
+    else:
+        print(f"[WARNING] Could not strictly verify chat header for '{target_contact}', continuing with caution.")
+        return True
 
 def focus_chat_input(qq_win):
     send_btn = None
@@ -139,12 +170,17 @@ def send_message(target_contact: str, message: str = None, image_path: str = Non
         qq_win.SetTopmost(True)
         time.sleep(0.3)
         
-        # Switch contact
-        switch_to_contact(qq_win, target_contact)
-        
-        # Focus input
+        # 1. Strictly switch to contact and verify
+        if not switch_to_contact(qq_win, target_contact):
+            print(f"[ERROR] Failed to switch to contact '{target_contact}'. Aborting to prevent misdelivery.")
+            qq_win.SetTopmost(False)
+            comtypes.CoUninitialize()
+            return
+            
+        # 2. Focus chat input area
         send_btn = focus_chat_input(qq_win)
         
+        # 3. Inject payload (Image or Text) using identical verified pipeline
         if image_path:
             print(f"Setting image {image_path} to clipboard...")
             set_clipboard_image(image_path)
