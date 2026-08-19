@@ -18,6 +18,9 @@ python .agents/skills/qq-automation/scripts/qq_tool.py --to "联系人姓名" --
 # Send an image to a contact
 python .agents/skills/qq-automation/scripts/qq_tool.py --to "联系人姓名" --image "path/to/image.jpg"
 
+# Send a file to a contact
+python .agents/skills/qq-automation/scripts/qq_tool.py --to "联系人姓名" --file "path/to/document.pdf"
+
 # Batch send multiple messages with interval
 python .agents/skills/qq-automation/scripts/qq_tool.py --to "联系人姓名" --msg "消息内容" --count 100 --interval 0.05
 ```

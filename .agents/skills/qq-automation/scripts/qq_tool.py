@@ -1,6 +1,8 @@
 import argparse
 import ctypes
+from ctypes import wintypes
 import io
+import os
 import sys
 import threading
 import time
@@ -13,6 +15,14 @@ import win32clipboard
 
 pyautogui.FAILSAFE = False
 user32 = ctypes.windll.user32
+
+class DROPFILES(ctypes.Structure):
+    _fields_ = [
+        ("pFiles", wintypes.DWORD),
+        ("pt", wintypes.POINT),
+        ("fNC", wintypes.BOOL),
+        ("fWide", wintypes.BOOL),
+    ]
 
 def attach_desktop():
     hWinSta = user32.OpenWindowStationW("WinSta0", False, 0x0000037F)
@@ -34,7 +44,7 @@ def close_popups_if_any():
         card_win.Close()
         time.sleep(0.3)
 
-def set_clipboard_image(image_path):
+def set_clipboard_image(image_path: str):
     image = Image.open(image_path)
     output = io.BytesIO()
     image.convert("RGB").save(output, "BMP")
@@ -45,6 +55,14 @@ def set_clipboard_image(image_path):
     win32clipboard.EmptyClipboard()
     win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
     win32clipboard.CloseClipboard()
+
+import subprocess
+
+def set_clipboard_file(file_path: str):
+    abs_path = os.path.abspath(file_path)
+    if not os.path.exists(abs_path):
+        raise FileNotFoundError(f"File not found: {abs_path}")
+    subprocess.run(["powershell", "-Command", f"Set-Clipboard -Path '{abs_path}'"], check=True)
 
 def verify_active_chat(qq_win, target_contact: str) -> bool:
     """Verifies that the right-side chat title header strictly matches target_contact."""
@@ -149,10 +167,24 @@ def focus_chat_input(qq_win):
     if send_btn:
         rect = send_btn.BoundingRectangle
         pyautogui.click(rect.left - 100, rect.top - 50)
-        time.sleep(0.3)
-    return send_btn
+def click_send_or_modal(qq_win, default_send_btn=None):
+    # Check if a modal send button (such as "发送(1)") appeared
+    modal_btn = None
+    for ctrl, depth, _ in auto.WalkTree(qq_win, getChildren=lambda c: c.GetChildren(), maxDepth=25):
+        if ctrl.ControlTypeName == "ButtonControl" and "发送" in ctrl.Name and "(" in ctrl.Name:
+            modal_btn = ctrl
+            break
+            
+    if modal_btn:
+        modal_btn.Click(simulateMove=False)
+        return True
+    if default_send_btn:
+        default_send_btn.Click(simulateMove=False)
+        return True
+    pyautogui.press('enter')
+    return True
 
-def send_message(target_contact: str, message: str = None, image_path: str = None, count: int = 1, interval: float = 0.05, screenshot_path: str = None) -> bool:
+def send_message(target_contact: str, message: str = None, image_path: str = None, file_path: str = None, count: int = 1, interval: float = 0.05, screenshot_path: str = None) -> bool:
     success = False
     
     def worker():
@@ -180,18 +212,26 @@ def send_message(target_contact: str, message: str = None, image_path: str = Non
         # 2. Focus chat input area
         send_btn = focus_chat_input(qq_win)
         
-        # 3. Inject payload (Image or Text) using identical verified pipeline
-        if image_path:
+        # 3. Inject payload using identical verified pipeline
+        if file_path:
+            print(f"Setting file {file_path} to clipboard...")
+            set_clipboard_file(file_path)
+            time.sleep(0.2)
+            for i in range(count):
+                pyautogui.hotkey('ctrl', 'v')
+                time.sleep(1.2)
+                click_send_or_modal(qq_win, send_btn)
+                if interval > 0 and i < count - 1:
+                    time.sleep(interval)
+            print(f"[SUCCESS] Sent {count} file(s) to '{target_contact}'")
+        elif image_path:
             print(f"Setting image {image_path} to clipboard...")
             set_clipboard_image(image_path)
             time.sleep(0.2)
             for i in range(count):
                 pyautogui.hotkey('ctrl', 'v')
                 time.sleep(1.0)
-                if send_btn:
-                    send_btn.Click(simulateMove=False)
-                else:
-                    pyautogui.press('enter')
+                click_send_or_modal(qq_win, send_btn)
                 if interval > 0 and i < count - 1:
                     time.sleep(interval)
             print(f"[SUCCESS] Sent {count} image(s) to '{target_contact}'")
@@ -228,15 +268,16 @@ def main():
     parser.add_argument("--to", required=True, help="Contact/Group name")
     parser.add_argument("--msg", default=None, help="Message text to send")
     parser.add_argument("--image", default=None, help="Image file path to send")
+    parser.add_argument("--file", default=None, help="File path to send")
     parser.add_argument("--count", type=int, default=1, help="Number of times to send (default: 1)")
     parser.add_argument("--interval", type=float, default=0.05, help="Interval between messages in seconds (default: 0.05)")
     parser.add_argument("--screenshot", default=None, help="Optional path to save verification screenshot")
     args = parser.parse_args()
     
-    if not args.msg and not args.image:
-        parser.error("At least one of --msg or --image is required.")
+    if not args.msg and not args.image and not args.file:
+        parser.error("At least one of --msg, --image, or --file is required.")
         
-    ok = send_message(args.to, message=args.msg, image_path=args.image, count=args.count, interval=args.interval, screenshot_path=args.screenshot)
+    ok = send_message(args.to, message=args.msg, image_path=args.image, file_path=args.file, count=args.count, interval=args.interval, screenshot_path=args.screenshot)
     sys.exit(0 if ok else 1)
 
 if __name__ == "__main__":
