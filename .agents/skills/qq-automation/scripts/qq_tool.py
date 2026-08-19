@@ -3,6 +3,7 @@ import ctypes
 from ctypes import wintypes
 import io
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -56,8 +57,6 @@ def set_clipboard_image(image_path: str):
     win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
     win32clipboard.CloseClipboard()
 
-import subprocess
-
 def set_clipboard_file(file_path: str):
     abs_path = os.path.abspath(file_path)
     if not os.path.exists(abs_path):
@@ -66,20 +65,27 @@ def set_clipboard_file(file_path: str):
 
 def verify_active_chat(qq_win, target_contact: str) -> bool:
     """Verifies that the right-side chat title header strictly matches target_contact."""
+    win_rect = qq_win.BoundingRectangle
+    header_min_x = win_rect.left + 250
+    header_max_y = win_rect.top + 250
+    prefix = target_contact[:6] if len(target_contact) > 6 else target_contact
+    
     if target_contact in ["我的手机", "手机", "传输助手"]:
         for ctrl, _, _ in auto.WalkTree(qq_win, getChildren=lambda c: c.GetChildren(), maxDepth=25):
-            if "我的手机" in ctrl.Name and ctrl.BoundingRectangle.left >= 500 and ctrl.BoundingRectangle.top <= 650:
+            if "我的手机" in ctrl.Name and ctrl.BoundingRectangle.left >= header_min_x and ctrl.BoundingRectangle.top <= header_max_y:
                 return True
-        return True
+        return False
         
     for ctrl, _, _ in auto.WalkTree(qq_win, getChildren=lambda c: c.GetChildren(), maxDepth=25):
-        if ctrl.Name == target_contact and ctrl.BoundingRectangle.left >= 500 and ctrl.BoundingRectangle.top <= 650:
-            return True
+        if ctrl.BoundingRectangle.left >= header_min_x and ctrl.BoundingRectangle.top <= header_max_y:
+            if target_contact in ctrl.Name or prefix in ctrl.Name:
+                return True
     return False
 
 def switch_to_contact(qq_win, target_contact: str) -> bool:
     """Unified recipient selection & verification logic."""
     print(f"[*] Navigating to recipient '{target_contact}'...")
+    win_rect = qq_win.BoundingRectangle
     
     # 1. Special case: "我的手机"
     if target_contact in ["我的手机", "手机", "传输助手"]:
@@ -101,15 +107,16 @@ def switch_to_contact(qq_win, target_contact: str) -> bool:
         print(f"[+] Recipient '{target_contact}' is already active.")
         return True
         
-    # 3. Check visible session list in left sidebar (X < 550)
+    # 3. Check visible session list in left sidebar
+    prefix = target_contact[:6] if len(target_contact) > 6 else target_contact
     target_ctrl = None
     for ctrl, depth, _ in auto.WalkTree(qq_win, getChildren=lambda c: c.GetChildren(), maxDepth=25):
-        if ctrl.Name == target_contact and ctrl.ControlTypeName == "TextControl" and ctrl.BoundingRectangle.left < 550:
+        if (ctrl.Name == target_contact or prefix in ctrl.Name) and ctrl.ControlTypeName == "TextControl" and ctrl.BoundingRectangle.left < win_rect.left + 350:
             target_ctrl = ctrl
             break
             
     if target_ctrl:
-        print(f"[+] Found '{target_contact}' in session list. Clicking...")
+        print(f"[+] Found '{target_ctrl.Name}' in session list. Clicking...")
         target_ctrl.Click(simulateMove=False)
         time.sleep(0.8)
         if verify_active_chat(qq_win, target_contact):
@@ -131,13 +138,18 @@ def switch_to_contact(qq_win, target_contact: str) -> bool:
         time.sleep(0.1)
         pyperclip.copy(target_contact)
         pyautogui.hotkey('ctrl', 'v')
-        time.sleep(1.0)
+        time.sleep(1.2)
         
         target_item = None
         for ctrl, _, _ in auto.WalkTree(qq_win, getChildren=lambda c: c.GetChildren(), maxDepth=25):
-            if target_contact in ctrl.Name and ctrl.ControlTypeName == "ListItemControl":
-                target_item = ctrl
-                break
+            if ctrl.ControlTypeName == "ListItemControl":
+                name = ctrl.Name
+                # Exclude chat records / files / external search options
+                if "来自" in name or "进入综合搜索" in name:
+                    continue
+                if target_contact in name or prefix in name:
+                    target_item = ctrl
+                    break  # Take the first exact contact/group match!
                 
         if target_item:
             print(f"[+] Clicking search result item '{target_item.Name}'...")
@@ -154,8 +166,8 @@ def switch_to_contact(qq_win, target_contact: str) -> bool:
         print(f"[SUCCESS] Verified active chat is '{target_contact}'.")
         return True
     else:
-        print(f"[WARNING] Could not strictly verify chat header for '{target_contact}', continuing with caution.")
-        return True
+        print(f"[ERROR] Strict chat header verification failed for '{target_contact}'. Active chat does not match!")
+        return False
 
 def focus_chat_input(qq_win):
     send_btn = None
@@ -167,8 +179,10 @@ def focus_chat_input(qq_win):
     if send_btn:
         rect = send_btn.BoundingRectangle
         pyautogui.click(rect.left - 100, rect.top - 50)
+        time.sleep(0.3)
+    return send_btn
+
 def click_send_or_modal(qq_win, default_send_btn=None):
-    # Check if a modal send button (such as "发送(1)") appeared
     modal_btn = None
     for ctrl, depth, _ in auto.WalkTree(qq_win, getChildren=lambda c: c.GetChildren(), maxDepth=25):
         if ctrl.ControlTypeName == "ButtonControl" and "发送" in ctrl.Name and "(" in ctrl.Name:
@@ -204,7 +218,7 @@ def send_message(target_contact: str, message: str = None, image_path: str = Non
         
         # 1. Strictly switch to contact and verify
         if not switch_to_contact(qq_win, target_contact):
-            print(f"[ERROR] Failed to switch to contact '{target_contact}'. Aborting to prevent misdelivery.")
+            print(f"[ERROR] Failed to verify contact '{target_contact}'. Aborting send to protect privacy/accuracy.")
             qq_win.SetTopmost(False)
             comtypes.CoUninitialize()
             return
