@@ -31,7 +31,7 @@ def close_popups_if_any():
         card_win.Close()
         time.sleep(0.3)
 
-def send_message(target_contact: str, message: str, screenshot_path: str = None) -> bool:
+def send_message(target_contact: str, message: str, count: int = 1, interval: float = 0.05, screenshot_path: str = None) -> bool:
     success = False
     
     def worker():
@@ -106,13 +106,7 @@ def send_message(target_contact: str, message: str, screenshot_path: str = None)
                         pyautogui.press('enter')
                     time.sleep(0.8)
                     
-        # Paste message
-        pyperclip.copy(message)
-        time.sleep(0.1)
-        pyautogui.hotkey('ctrl', 'v')
-        time.sleep(0.4)
-        
-        # Click Send button
+        # Focus chat input area
         send_btn = None
         for ctrl, _, _ in auto.WalkTree(qq_win, getChildren=lambda c: c.GetChildren(), maxDepth=25):
             if ctrl.ControlTypeName == "ButtonControl" and ctrl.Name == "发送":
@@ -120,10 +114,23 @@ def send_message(target_contact: str, message: str, screenshot_path: str = None)
                 break
                 
         if send_btn:
-            send_btn.Click(simulateMove=False)
-        else:
+            rect = send_btn.BoundingRectangle
+            pyautogui.click(rect.left - 100, rect.top - 50)
+            time.sleep(0.2)
+            
+        # Send message loop
+        pyperclip.copy(message)
+        time.sleep(0.1)
+        
+        print(f"Sending {count} message(s) to '{target_contact}'...")
+        for i in range(count):
+            pyautogui.hotkey('ctrl', 'v')
+            time.sleep(0.01)
             pyautogui.press('enter')
-        time.sleep(0.8)
+            if interval > 0 and i < count - 1:
+                time.sleep(interval)
+                
+        time.sleep(0.5)
         
         if screenshot_path:
             s = pyautogui.screenshot()
@@ -133,7 +140,7 @@ def send_message(target_contact: str, message: str, screenshot_path: str = None)
         qq_win.SetTopmost(False)
         comtypes.CoUninitialize()
         success = True
-        print(f"[SUCCESS] Message sent to '{target_contact}': '{message}'")
+        print(f"[SUCCESS] Sent {count} message(s) to '{target_contact}': '{message}'")
 
     t = threading.Thread(target=worker)
     t.start()
@@ -144,10 +151,12 @@ def main():
     parser = argparse.ArgumentParser(description="QQ NT UI Automation Tool")
     parser.add_argument("--to", required=True, help="Contact/Group name")
     parser.add_argument("--msg", required=True, help="Message text to send")
+    parser.add_argument("--count", type=int, default=1, help="Number of times to send (default: 1)")
+    parser.add_argument("--interval", type=float, default=0.05, help="Interval between messages in seconds (default: 0.05)")
     parser.add_argument("--screenshot", default=None, help="Optional path to save verification screenshot")
     args = parser.parse_args()
     
-    ok = send_message(args.to, args.msg, args.screenshot)
+    ok = send_message(args.to, args.msg, args.count, args.interval, args.screenshot)
     sys.exit(0 if ok else 1)
 
 if __name__ == "__main__":

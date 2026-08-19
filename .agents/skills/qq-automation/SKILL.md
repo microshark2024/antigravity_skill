@@ -14,6 +14,9 @@ A ready-to-use Python automation script is located in `scripts/qq_tool.py`:
 ```bash
 # Send a message to any contact / group / "我的手机"
 python .agents/skills/qq-automation/scripts/qq_tool.py --to "联系人姓名" --msg "你的消息内容" --screenshot "verification.png"
+
+# Batch send multiple messages with interval
+python .agents/skills/qq-automation/scripts/qq_tool.py --to "联系人姓名" --msg "消息内容" --count 100 --interval 0.05
 ```
 
 ## How It Works
